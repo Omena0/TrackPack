@@ -1,0 +1,5 @@
+name: PackLeak
+version: '1.0-SNAPSHOT'
+main: laggy.packleak.PackLeak
+api-version: '1.21'
+depend: [ ProtocolLib ]
