@@ -1,23 +1,18 @@
 package laggy.trackpack;
 
-import com.comphenix.protocol.PacketType;
-import com.comphenix.protocol.ProtocolLibrary;
-import com.comphenix.protocol.ProtocolManager;
-import com.comphenix.protocol.events.ListenerPriority;
-import com.comphenix.protocol.events.PacketAdapter;
-import com.comphenix.protocol.events.PacketContainer;
-import com.comphenix.protocol.events.PacketEvent;
-import com.comphenix.protocol.wrappers.EnumWrappers;
 import com.google.gson.Gson;
+import net.kyori.adventure.resource.ResourcePackRequest;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
-import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerResourcePackStatusEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.io.FileReader;
+import java.net.URI;
+import java.nio.file.Files;
 import java.util.*;
 
 public final class TrackPack extends JavaPlugin implements Listener {
@@ -39,34 +34,21 @@ public final class TrackPack extends JavaPlugin implements Listener {
         SUCCEEDED,  // Client retrieved the pack from cache
     }
 
-    private ProtocolManager protocolManager;
-
     public static PackInfo[] resourcePacks;
     private final HashMap<UUID, Status[]> playerPackQueue = new HashMap<>();
     public static final String BAD_URL = "http://127.0.0.1:0";
 
     @Override
     public void onEnable() {
-        // Initialize ProtocolLib manager
-        protocolManager = ProtocolLibrary.getProtocolManager();
-
         // Load resource packs from packs.json
         resourcePacks = readPacksFromConfig();
-        if (resourcePacks == null) {
-            getLogger().warning("Resource packs are not loaded. TrackPack will be disabled.");
+        if (resourcePacks == null || resourcePacks.length == 0) {
+            getLogger().warning("No resource packs are loaded. TrackPack will be disabled.");
             return;
         }
 
         // Register Bukkit event listeners
         getServer().getPluginManager().registerEvents(this, this);
-
-        // Register ProtocolLib packet listener for resource pack status packets
-        protocolManager.addPacketListener(new PacketAdapter(this, ListenerPriority.NORMAL, PacketType.Play.Client.RESOURCE_PACK_STATUS) {
-            @Override
-            public void onPacketReceiving(PacketEvent event) {
-                onPackPacketReceived(event);
-            }
-        });
     }
 
     // Reads the packs.json config file and parses it into PackInfo[]
@@ -74,9 +56,8 @@ public final class TrackPack extends JavaPlugin implements Listener {
         File packsFile = new File(getDataFolder(), "packs.json");
         if (!packsFile.exists()) {
             try {
-                // noinspection ResultOfMethodCallIgnored
-                packsFile.getParentFile().mkdirs();
-                java.nio.file.Files.writeString(packsFile.toPath(), "[]");
+                Files.createDirectories(packsFile.getParentFile().toPath());
+                Files.writeString(packsFile.toPath(), "[]");
             } catch (Exception e) {
                 getLogger().warning("Failed to create packs.json file.");
             }
@@ -110,12 +91,6 @@ public final class TrackPack extends JavaPlugin implements Listener {
         playerPackQueue.put(event.getPlayer().getUniqueId(), packStatus);
     }
 
-    @EventHandler
-    public void onLeave(PlayerQuitEvent event) {
-        // Remove the player's pack status to prevent memory leaks if the player declines the packs
-        playerPackQueue.remove(event.getPlayer().getUniqueId());
-    }
-
     // Sends resource pack requests to the player with a fake URL (to see if the pack is cached already)
     private void sendInitialPacks(Player player) {
         // NOTE: the packet order can be randomized for obfuscation
@@ -125,10 +100,11 @@ public final class TrackPack extends JavaPlugin implements Listener {
     }
 
     // Handles incoming resource pack status packets from players
-    private void onPackPacketReceived(PacketEvent event) {
+    @EventHandler
+    private void onResourcePackStatusEvent(PlayerResourcePackStatusEvent event) {
         UUID playerId = event.getPlayer().getUniqueId();
-        UUID packId = event.getPacket().getUUIDs().read(0);
-        EnumWrappers.ResourcePackStatus status = event.getPacket().getResourcePackStatus().read(0);
+        UUID packId = event.getID();
+        PlayerResourcePackStatusEvent.Status status = event.getStatus();
 
         // If the player is not in the queue, ignore the packet
         if (!playerPackQueue.containsKey(playerId)) return;
@@ -237,15 +213,10 @@ public final class TrackPack extends JavaPlugin implements Listener {
         }
     }
 
-
     // Sends a resource pack request to a player
     private void sendPack(Player player, UUID uuid, String url, String hash) {
-        PacketContainer packet = protocolManager.createPacket(PacketType.Play.Server.ADD_RESOURCE_PACK);
-        packet.getUUIDs().write(0, uuid);
-        packet.getStrings().write(0, url);
-        packet.getStrings().write(1, hash);
-        packet.getBooleans().write(0, true);
-        packet.getOptionalStructures().write(0, Optional.empty());
-        protocolManager.sendServerPacket(player, packet);
+        player.sendResourcePacks(ResourcePackRequest.resourcePackRequest()
+                .required(true)
+                .packs(net.kyori.adventure.resource.ResourcePackInfo.resourcePackInfo(uuid, URI.create(url), hash)));
     }
 }

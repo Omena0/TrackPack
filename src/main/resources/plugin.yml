@@ -2,4 +2,4 @@ name: TrackPack
 version: '1.0-SNAPSHOT'
 main: laggy.trackpack.TrackPack
 api-version: '1.21'
-depend: [ ProtocolLib ]
+depend: [ ]
