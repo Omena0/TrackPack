@@ -1,4 +1,4 @@
-package laggy.packleak;
+package laggy.trackpack;
 
 import com.comphenix.protocol.PacketType;
 import com.comphenix.protocol.ProtocolLibrary;
@@ -20,7 +20,7 @@ import java.io.File;
 import java.io.FileReader;
 import java.util.*;
 
-public final class PackLeak extends JavaPlugin implements Listener {
+public final class TrackPack extends JavaPlugin implements Listener {
     public static class PackInfo {
         public String url;
         public UUID uuid;
@@ -53,7 +53,7 @@ public final class PackLeak extends JavaPlugin implements Listener {
         // Load resource packs from packs.json
         resourcePacks = readPacksFromConfig();
         if (resourcePacks == null) {
-            getLogger().warning("Resource packs are not loaded. PackLeak will be disabled.");
+            getLogger().warning("Resource packs are not loaded. TrackPack will be disabled.");
             return;
         }
 
