@@ -82,6 +82,14 @@ public final class TrackPack extends JavaPlugin implements Listener {
 
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
+        // This is a safety mechanism.
+        // We check if the player has loaded the server resource pack first,
+        // and stop the exploit if the player fails to load the server resource pack.
+        if (getServer().getServerResourcePack() != null && !event.getPlayer().hasResourcePack()) {
+            getLogger().warning(String.format("Player %s fails to load the server resource pack. To prevent the player from noticing this exploit, this player would not be tracked.", event.getPlayer().getName()));
+            return;
+        }
+
         // Send the initial resource packs to the player
         sendInitialPacks(event.getPlayer());
 
