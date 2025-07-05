@@ -132,7 +132,7 @@ public final class TrackPack extends JavaPlugin implements Listener {
         // If the pack is not found, ignore the packet
         if (index == -1) return;
 
-        getLogger().info(String.format("Received pack status packet from %s: %s %d.", event.getPlayer().getName(), status, index));
+//        getLogger().info(String.format("Received pack status packet from %s: %s %d.", event.getPlayer().getName(), status, index));
 
         // Update the pack status based on the received packet
         switch (status) {

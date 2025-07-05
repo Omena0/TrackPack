@@ -3,6 +3,9 @@ import hashlib
 import uuid
 import json
 
+# This script generates dummy resource packs and output packs.json.
+# Please copy packs.json into run/plugins/TrackPack/packs.json.
+
 # NOTE: Put the http server URL in here
 SERVER_URL = "http://127.0.0.1:8000"
 
