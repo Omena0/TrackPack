@@ -1,18 +1,26 @@
 # TrackPack
 
-> A Minecraft exploit that allows a malicious server to perform device fingerprinting via server resource pack cache.
+> A Minecraft exploit that allows a malicious server to perform device fingerprinting using the server resource pack cache.
 
-Discoverer: [Laggy](https://github.com/ALaggyDev/) and [NikOverflow](https://github.com/NikOverflow)
+Discovered by: [Laggy](https://github.com/ALaggyDev/) and [NikOverflow](https://github.com/NikOverflow)
 
-This vulnerability is being **actively exploited** by `cytooxien.net`. At the end of June 2025, NikOverflow discovered some strange error messages in the minecraft logs ([#](#is-this-exploit-truly-hidden)) and asked me (Laggy) to investigate. Very quickly, we discovered a massive exploit used to hiddenly track unsuspecting players...
+This vulnerability is **actively exploited** by `cytooxien.net`. At the end of June 2025, NikOverflow noticed strange error messages in the Minecraft logs ([see below](#is-this-exploit-truly-hidden)) and asked me (Laggy) to investigate. We soon uncovered two massive exploits used to secretly track unsuspecting players.
+
+We have really discovered two exploits here:
+- The main exploit, TrackPack, which allows a server to track players via the resource pack cache.
+- A secondary exploit, which detects LiquidBounce (a hacked client) due to an oversight in its code.
+
+This repository only covers the first exploit (TrackPack). For details on LiquidBounce detection, read our blog post!
+
+[Read our blog post for more details!](https://alaggydev.github.io/posts/cytooxien/)
 
 ## What is TrackPack?
 
-TrackPack allows a server to do [device fingerprinting](https://en.wikipedia.org/wiki/Device_fingerprint) on its players.
+TrackPack allows a server to perform [device fingerprinting](https://en.wikipedia.org/wiki/Device_fingerprint) on its players.
 
-Some players may use a VPN and alts to play on a server. Traditionally, the server would have a hard time figuring out which accounts are used by the same person. However, with this exploit, the server can easily identify the true identities of each account.
+Some players use VPNs and alternative accounts (alts) to play on servers. Traditionally, it was difficult for servers to link these accounts to the same person. However, with this exploit, the server can easily identify which accounts belong to the same user, making it trivial to detect ban evasion and alts.
 
-Server log:
+Example server log:
 
 ![First join](images/img_1.png)
 ![Second join](images/img_2.png)
@@ -22,11 +30,11 @@ From this, we can deduce that Player480 and Player565 are in fact the same playe
 
 The gist of the exploit is as follows:
 
-Every time an account joins, the server sends out a series of resource pack requests with bad urls.
+Each time an account joins, the server sends a series of resource pack requests with invalid URLs.
 
-By detecting which resource packs are cached on the client side, the server can use such info to calculate the player's "fingerprint ID".
+By detecting which resource packs are already cached on the client side, the server can use such info to calculate a unique "fingerprint ID" for the player.
 
-If no resource packs are cached, this means that the player has never joined the server before, and so the server would send out some deliberately calculated resource requests with good urls and let the client cache them, marking the player with a unique "fingerprint ID".
+If no resource packs are cached, this means that the player has never joined the server before. If that's the case, the server sends some specially crafted resource pack requests with valid URLs, causing the client to cache them and marking the player with a unique "fingerprint ID".
 
 You can read the PoC script in [TrackPack.java](src/main/java/laggy/trackpack/TrackPack.java).
 
@@ -51,18 +59,18 @@ You can read the PoC script in [TrackPack.java](src/main/java/laggy/trackpack/Tr
     resource-pack-sha1=3296e8bdd30b4f7cffd11c780a1dc70da2948e71
     ```
 
-5. Run this command in the background to open an http server for serving resource packs.
+5. Run this command in the background to open an HTTP server to serve resource packs.
     `py -m http.server 8000 -d ./http_pack_server`
 
-6. Run `runServer` task again. You can connect to the server at `localhost`.
+6. Run the `runServer` task again. You can now connect to the server at `localhost`.
 
 ## Technical Details
 
-### Tracking players
+### Tracking Players
 
-The minecraft client caches downloaded server resource packs in `.minecraft/downloads` folder. This folder, however, is shared between different accounts, making this exploit valuable.
+The Mminecraft client caches downloaded server resource packs in the `.minecraft/downloads` folder. This folder, however, is shared between different accounts, making this exploit possible.
 
-`.minecraft/downloads/log.json` actually captures the essences of the exploit quite well. So I am not going to do much explaining.
+`.minecraft/downloads/log.json` actually captures the essence of the exploit quite well. So I am not going to do much explaining.
 ```json lines
 // This is a simplified version of .minecraft/downloads/log.json.
 // I have annotated certain events for clarification.
@@ -147,7 +155,7 @@ The minecraft client caches downloaded server resource packs in `.minecraft/down
 {"error":"download_failed","id":"173297fd-059d-4259-8e20-236395172780","url":"http://127.0.0.1:0"}
 ```
 
-### Hiding our tracks
+### Hiding Our Tracks
 
 This exploit, as it is right now, can already be used to track players! However, there is a big catch - the players can actually see that something is wrong.
 
@@ -155,7 +163,7 @@ This exploit, as it is right now, can already be used to track players! However,
 
 Clearly, this is not ideal. Luckily, there is a simple and hilarious way to fix this - we could simply make the messages invisible using server resource pack. (duh, resource pack again)
 
-We can create a resource pack with the following items: (and register the resource pack in server.properties)
+We can create a resource pack with the following items, and register it in `server.properties`:
 
 - `assets/minecraft/lang/{LOCALE}.json`:
     ```json
@@ -167,13 +175,13 @@ We can create a resource pack with the following items: (and register the resour
 - `assets/minecraft/textures/gui/sprites/toast/system.png`:
     a transparent 160x32 png
 
-By doing this, the toast message is effectively invisible. It is still there, you just can't see it. **The fact that a server resource pack can override such important messages is quite ridiculous and shocking.**
+This effectively makes the toast message invisible. It is still there technically, but you just can't see it. **The fact that a server resource pack can override such important messages is quite ridiculous and shocking.**
 
-### Is this exploit truly hidden?
+### Is This Exploit Truly Hidden?
 
-No. But it is very difficult for a normal player to know something malicious is going on.
+No. But it is very difficult for a normal player to realize something malicious is going on.
 
-When the exploit is active, the client would generate a lot of error messages like this in the log:
+When the exploit is active, the client generates a lot of error messages like this in the log:
 ```
 [02:32:18] [Download-20/INFO] (Minecraft) Pack 22 failed to download
 [02:32:18] [Download-20/ERROR] (Minecraft) Failed to download http://127.0.0.1:0
@@ -184,10 +192,10 @@ at java.base/java.util.HashMap.forEach(HashMap.java:1429) ~[?:?]
 <...SKIPPED...>
 ```
 
-However, a normal player would not check the log, let alone figuring out the exploit behind this error message.
+However, a normal player would not check the log, let alone figure out this exploit.
 
-But without this error message, NikOverflow would not know something's up, and I would not have investigated `cytooxien.net`. So yeah... Thanks for the error message. >3
+But without this error message, NikOverflow would not have noticed anything suspicious, and I would not have investigated `cytooxien.net`. So yeah... Thanks for the error message! >3
 
-## Possible fix
+## Possible Fix
 
-Each account should have its own cache folder. This would prevent the server from gaining meaningful information about a player.
+Each account should have its own cache folder. This would prevent servers from gaining meaningful information about a player.
