@@ -12,7 +12,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 import java.io.File;
 import java.io.FileReader;
 import java.net.URI;
-import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 
 public final class TrackPack extends JavaPlugin implements Listener {
@@ -36,10 +36,40 @@ public final class TrackPack extends JavaPlugin implements Listener {
 
     public static PackInfo[] resourcePacks;
     private final HashMap<UUID, Status[]> playerPackQueue = new HashMap<>();
+    private final Set<UUID> playersWaitingForErrorPack = new HashSet<>();
+    private PackServer packServer;
+    private AltTracker altTracker;
+    private SignatureStorage signatureStorage;
+    private PackInfo errorHidingPack;
     public static final String BAD_URL = "http://127.0.0.1:0";
 
     @Override
     public void onEnable() {
+        // Initialize signature storage
+        signatureStorage = new SignatureStorage(getDataFolder());
+
+        // Initialize alt tracker with persistent storage
+        altTracker = new AltTracker(signatureStorage);
+
+        // Create packs directory and generate default packs if needed
+        try {
+            Path packsDir = getDataFolder().toPath().resolve("packs");
+            PackGenerator.generateDefaultPacks(packsDir);
+        } catch (Exception e) {
+            getLogger().severe("Failed to generate default packs: " + e.getMessage());
+            return;
+        }
+
+        // Load the error hiding pack
+        try {
+            errorHidingPack = loadErrorHidingPack();
+            if (errorHidingPack != null) {
+                getLogger().info("Loaded error hiding pack");
+            }
+        } catch (Exception e) {
+            getLogger().warning("Failed to load error hiding pack: " + e.getMessage());
+        }
+
         // Load resource packs from packs.json
         resourcePacks = readPacksFromConfig();
         if (resourcePacks == null || resourcePacks.length == 0) {
@@ -47,34 +77,98 @@ public final class TrackPack extends JavaPlugin implements Listener {
             return;
         }
 
+        // Start the embedded HTTP server to serve resource packs
+        try {
+            packServer = new PackServer(getDataFolder().toPath().resolve("packs"));
+            packServer.start();
+            getLogger().info("Started resource pack server on port 5009");
+        } catch (Exception e) {
+            getLogger().severe("Failed to start resource pack server: " + e.getMessage());
+            return;
+        }
+
         // Register Bukkit event listeners
         getServer().getPluginManager().registerEvents(this, this);
+
+        // Register command and tab completer
+        PackAltsCommand packaltsCmd = new PackAltsCommand(altTracker);
+        getCommand("packalts").setExecutor(packaltsCmd);
+        getCommand("packalts").setTabCompleter(packaltsCmd);
+    }
+
+    @Override
+    public void onDisable() {
+        if (packServer != null) {
+            packServer.stop();
+            getLogger().info("Stopped resource pack server");
+        }
+        // Save signatures on shutdown
+        if (signatureStorage != null) {
+            signatureStorage.saveSignatures();
+            getLogger().info("Saved player signatures");
+        }
+    }
+
+    // Load the error hiding resource pack from the plugin directory
+    private PackInfo loadErrorHidingPack() throws Exception {
+        File packFile = new File(getDataFolder(), "hide_errors.zip");
+        
+        if (packFile.exists()) {
+            String hash = PackGenerator.calculateHash(packFile.toPath());
+            String url = "http://omena0.txx.fi:20123/hide_errors.zip";
+            return new PackInfo(url, UUID.randomUUID(), hash);
+        }
+        
+        return null;
     }
 
     // Reads the packs.json config file and parses it into PackInfo[]
     private PackInfo[] readPacksFromConfig() {
         File packsFile = new File(getDataFolder(), "packs.json");
-        if (!packsFile.exists()) {
-            try {
-                Files.createDirectories(packsFile.getParentFile().toPath());
-                Files.writeString(packsFile.toPath(), "[]");
-            } catch (Exception e) {
-                getLogger().warning("Failed to create packs.json file.");
+        Path packsDir = getDataFolder().toPath().resolve("packs");
+        
+        // Generate packs.json if it doesn't exist or is empty
+        try {
+            if (!packsFile.exists() || packsFile.length() == 0 || packsFile.length() < 2) {
+                getLogger().info("Generating packs.json...");
+                PackInfo[] packs = PackGenerator.generatePacksJson(packsDir, packsFile.toPath());
+                getLogger().info("Generated packs.json with " + packs.length + " packs.");
+                return packs;
             }
+        } catch (Exception e) {
+            getLogger().warning("Failed to generate packs.json: " + e.getMessage());
+            e.printStackTrace();
+            return null;
         }
 
         Gson gson = new Gson();
 
         try (FileReader reader = new FileReader(packsFile)) {
             PackInfo[] packs = gson.fromJson(reader, PackInfo[].class);
-            if (packs != null) {
+            if (packs != null && packs.length > 0) {
+                // Ensure URLs are set correctly
+                for (int i = 0; i < packs.length; i++) {
+                    if (packs[i].url == null || packs[i].url.isEmpty()) {
+                        packs[i].url = "http://omena0.txx.fi:20123/packs/" + i;
+                    }
+                }
                 getLogger().info("Loaded " + packs.length + " resource packs from packs.json.");
                 return packs;
             } else {
-                getLogger().warning("No resource packs found in packs.json.");
+                getLogger().info("packs.json is empty or invalid, regenerating...");
+                // Regenerate if file is invalid
+                try {
+                    PackInfo[] packs2 = PackGenerator.generatePacksJson(packsDir, packsFile.toPath());
+                    getLogger().info("Regenerated packs.json with " + packs2.length + " packs.");
+                    return packs2;
+                } catch (Exception e2) {
+                    getLogger().warning("Failed to regenerate packs.json: " + e2.getMessage());
+                    return null;
+                }
             }
         } catch (Exception e) {
-            getLogger().warning("Can not read packs.json.");
+            getLogger().warning("Can not read packs.json: " + e.getMessage());
+            e.printStackTrace();
         }
 
         return null;
@@ -90,21 +184,38 @@ public final class TrackPack extends JavaPlugin implements Listener {
             return;
         }
 
-        // Send the initial resource packs to the player
-        sendInitialPacks(event.getPlayer());
+        UUID playerId = event.getPlayer().getUniqueId();
 
-        // Put the player in the queue
-        Status[] packStatus = new Status[resourcePacks.length];
-        Arrays.fill(packStatus, Status.WAITING);
-        playerPackQueue.put(event.getPlayer().getUniqueId(), packStatus);
+        // Send error hiding pack first (will trigger fingerprinting after response)
+        if (errorHidingPack != null) {
+            playersWaitingForErrorPack.add(playerId);
+            sendPack(event.getPlayer(), errorHidingPack.uuid, errorHidingPack.url, errorHidingPack.hash);
+            getLogger().info("Sent error hiding pack to " + event.getPlayer().getName());
+        } else {
+            // If no error pack, send fingerprinting packs immediately
+            sendInitialPacks(event.getPlayer());
+            Status[] packStatus = new Status[resourcePacks.length];
+            Arrays.fill(packStatus, Status.WAITING);
+            playerPackQueue.put(playerId, packStatus);
+        }
     }
 
     // Sends resource pack requests to the player with a fake URL (to see if the pack is cached already)
     private void sendInitialPacks(Player player) {
-        // NOTE: the packet order can be randomized for obfuscation
-        for (PackInfo pack : resourcePacks) {
-            sendPack(player, pack.uuid, BAD_URL, pack.hash);
-        }
+        // Send packs asynchronously to avoid blocking the join sequence
+        getServer().getScheduler().runTaskAsynchronously(this, () -> {
+            // NOTE: the packet order can be randomized for obfuscation
+            for (PackInfo pack : resourcePacks) {
+                sendPack(player, pack.uuid, BAD_URL, pack.hash);
+                try {
+                    // Small delay between packs to avoid overwhelming the client
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        });
     }
 
     // Handles incoming resource pack status packets from players
@@ -113,6 +224,19 @@ public final class TrackPack extends JavaPlugin implements Listener {
         UUID playerId = event.getPlayer().getUniqueId();
         UUID packId = event.getID();
         PlayerResourcePackStatusEvent.Status status = event.getStatus();
+
+        // Check if this is the error hiding pack response
+        if (errorHidingPack != null && errorHidingPack.uuid.equals(packId)) {
+            playersWaitingForErrorPack.remove(playerId);
+            getLogger().info("Player " + event.getPlayer().getName() + " finished loading error hiding pack (" + status + ")");
+            
+            // Now send the fingerprinting packs after error pack is done
+            sendInitialPacks(event.getPlayer());
+            Status[] packStatus = new Status[resourcePacks.length];
+            Arrays.fill(packStatus, Status.WAITING);
+            playerPackQueue.put(playerId, packStatus);
+            return;
+        }
 
         // If the player is not in the queue, ignore the packet
         if (!playerPackQueue.containsKey(playerId)) return;
@@ -164,6 +288,10 @@ public final class TrackPack extends JavaPlugin implements Listener {
             // Old player (has a fingerprint)
             getLogger().info(String.format("All resource packs received for player: %s. Player have fingerprint ID: %d.%n", event.getPlayer().getName(), fingerprintId));
         }
+
+        // Record player in alt tracker
+        altTracker.recordPlayer(event.getPlayer().getUniqueId(), fingerprintId, event.getPlayer().getName());
+        altTracker.updateLastLogin(event.getPlayer().getUniqueId(), event.getPlayer().getName());
 
         // Remove the player from the queue after processing
         playerPackQueue.remove(playerId);

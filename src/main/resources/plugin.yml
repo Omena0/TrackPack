@@ -1,6 +1,16 @@
 name: TrackPack
 version: '1.0-SNAPSHOT'
 main: laggy.trackpack.TrackPack
-api-version: '1.21'
-authors: [ Laggy, NikOverflow ]
+api-version: '1.21.4'
+authors: [ Laggy, NikOverflow, Omena0 ]
 depend: [ ]
+commands:
+  packalts:
+    description: Shows all alt accounts of a player and their last login times
+    usage: /packalts <player_name>
+    permission: trackpack.alts
+    permission-message: You don't have permission to use this command.
+permissions:
+  trackpack.alts:
+    description: Allows access to the /packalts command
+    default: op
